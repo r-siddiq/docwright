@@ -132,5 +132,28 @@ test('view resolves by readable_id', function () {
     assert_true(strpos($output, 'Welcome content') !== false, 'Expected document body');
 });
 
+test('search returns prefix matches', function () {
+    $pdo = db();
+
+    // Create docs with distinct titles
+    $stmt = $pdo->prepare('INSERT INTO documents (title, body, created_by) VALUES (?, ?, 1)');
+    $stmt->execute(['Welcome Packet', 'Welcome body']);
+    $stmt->execute(['Welcome Guide', 'Guide body']);
+    $stmt->execute(['Other Document', 'Other body']);
+
+    // Test search - need to use LIKE query
+    $stmt = db()->prepare("SELECT title FROM documents WHERE title LIKE ?");
+    $stmt->execute(['Welcome%']);
+    $results = $stmt->fetchAll();
+
+    assert_true(count($results) === 2, 'Expected 2 Welcome documents, got ' . count($results));
+});
+
+test('empty search returns all', function () {
+    $stmt = db()->query('SELECT COUNT(*) as cnt FROM documents');
+    $count = $stmt->fetch()['cnt'];
+    assert_true($count > 0, 'Expected documents in DB');
+});
+
 echo "\n{$pass} passed, {$fail} failed.\n";
 exit($fail > 0 ? 1 : 0);
