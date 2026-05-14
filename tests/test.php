@@ -89,5 +89,48 @@ test('null scheduled_at shows content', function () {
     assert_true(strpos($output, 'Immediate Doc') !== false, 'Expected document title');
 });
 
+test('readable_id is generated and unique', function () {
+    $pdo = db();
+
+    // Create doc
+    $stmt = $pdo->prepare('INSERT INTO documents (title, body, created_by) VALUES (?, ?, 1)');
+    $stmt->execute(['Q3 Budget Report', 'Body']);
+    $docId = (int) $pdo->lastInsertId();
+
+    // Generate readable_id
+    $readableId = generate_readable_id('Q3 Budget Report');
+
+    // Create share
+    $stmt = $pdo->prepare('INSERT INTO shares (document_id, token, recipient_email, readable_id) VALUES (?, ?, ?, ?)');
+    $token = random_token();
+    $stmt->execute([$docId, $token, 'recipient2@example.test', $readableId]);
+
+    assert_true(!empty($readableId), 'readable_id should be generated');
+    assert_true(preg_match('/^[a-z0-9]+-[a-zA-Z0-9]{6}$/', $readableId), 'Format should be slug-random6: ' . $readableId);
+});
+
+test('view resolves by readable_id', function () {
+    $pdo = db();
+
+    // Create doc with share
+    $stmt = $pdo->prepare('INSERT INTO documents (title, body, created_by) VALUES (?, ?, 1)');
+    $stmt->execute(['Welcome Guide', 'Welcome content']);
+    $docId = (int) $pdo->lastInsertId();
+
+    $token = random_token();
+    $readableId = generate_readable_id('Welcome Guide');
+    $stmt = $pdo->prepare('INSERT INTO shares (document_id, token, recipient_email, readable_id) VALUES (?, ?, ?, ?)');
+    $stmt->execute([$docId, $token, 'recipient2@example.test', $readableId]);
+
+    // Capture view.php output with rid
+    ob_start();
+    $_GET['rid'] = $readableId;
+    include __DIR__ . '/../public/view.php';
+    $output = ob_get_clean();
+
+    assert_true(strpos($output, 'Welcome Guide') !== false, 'Expected document title');
+    assert_true(strpos($output, 'Welcome content') !== false, 'Expected document body');
+});
+
 echo "\n{$pass} passed, {$fail} failed.\n";
 exit($fail > 0 ? 1 : 0);

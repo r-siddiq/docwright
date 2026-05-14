@@ -57,4 +57,41 @@ if (!function_exists('h')) {
     }
 }
 
+if (!function_exists('slugify')) {
+    function slugify(string $title): string {
+        $first = strtok($title, " \t\n\r\0\x0B");
+        if ($first === false) {
+            return 'doc';
+        }
+        $slug = strtolower($first);
+        $slug = preg_replace('/[^a-z0-9-]/', '', $slug);
+        $slug = trim($slug, '-');
+        return empty($slug) ? 'doc' : substr($slug, 0, 20);
+    }
+}
+
+if (!function_exists('generate_readable_id')) {
+    function generate_readable_id(string $title): string {
+        $slug = slugify($title);
+        $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+        $maxAttempts = 3;
+
+        for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
+            $random = '';
+            for ($i = 0; $i < 6; $i++) {
+                $random .= $chars[random_int(0, strlen($chars) - 1)];
+            }
+            $id = $slug . '-' . $random;
+
+            $stmt = db()->prepare("SELECT 1 FROM shares WHERE readable_id = ?");
+            $stmt->execute([$id]);
+            if (!$stmt->fetch()) {
+                return $id;
+            }
+        }
+
+        throw new RuntimeException("Failed to generate unique readable_id after $maxAttempts attempts");
+    }
+}
+
 !defined('AUDIT_ACTION_SCHEDULE') && define('AUDIT_ACTION_SCHEDULE', 'schedule');

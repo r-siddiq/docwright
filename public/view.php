@@ -4,15 +4,29 @@ require __DIR__ . '/../lib/bootstrap.php';
 require __DIR__ . '/../lib/layout.php';
 
 $token = $_GET['token'] ?? '';
+$rid = $_GET['rid'] ?? '';
 
-$stmt = db()->prepare('
-    SELECT d.*, s.recipient_email
-    FROM shares s
-    JOIN documents d ON d.id = s.document_id
-    WHERE s.token = ?
-');
-$stmt->execute([$token]);
-$doc = $stmt->fetch();
+if ($rid) {
+    $stmt = db()->prepare('
+        SELECT d.*, s.recipient_email, s.readable_id
+        FROM shares s
+        JOIN documents d ON d.id = s.document_id
+        WHERE s.readable_id = ?
+    ');
+    $stmt->execute([$rid]);
+    $doc = $stmt->fetch();
+} elseif ($token) {
+    $stmt = db()->prepare('
+        SELECT d.*, s.recipient_email, s.readable_id
+        FROM shares s
+        JOIN documents d ON d.id = s.document_id
+        WHERE s.token = ?
+    ');
+    $stmt->execute([$token]);
+    $doc = $stmt->fetch();
+} else {
+    $doc = false;
+}
 
 if (!$doc) {
     http_response_code(404);

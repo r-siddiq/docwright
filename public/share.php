@@ -22,6 +22,7 @@ if (!$doc) {
 
 $error = null;
 $created_token = null;
+$created_rid = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email = trim($_POST['email'] ?? '');
@@ -29,17 +30,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'Recipient email is required.';
     } else {
         $token = random_token();
+        $readableId = generate_readable_id($doc['title']);
         $stmt = db()->prepare('
-            INSERT INTO shares (document_id, token, recipient_email)
-            VALUES (?, ?, ?)
+            INSERT INTO shares (document_id, token, recipient_email, readable_id)
+            VALUES (?, ?, ?, ?)
         ');
-        $stmt->execute([$doc['id'], $token, $email]);
+        $stmt->execute([$doc['id'], $token, $email, $readableId]);
         $shareId = (int) db()->lastInsertId();
         audit_log('create', 'share', $shareId, [
             'document_id' => $doc['id'],
             'recipient_email' => $email,
         ]);
         $created_token = $token;
+        $created_rid = $readableId;
     }
 }
 
@@ -57,8 +60,10 @@ render_header('Share · ' . $doc['title'], $staff);
 
 <?php if ($created_token): ?>
     <div class="banner banner-success">
-        Share link ready:
-        <code>http://<?= h($_SERVER['HTTP_HOST']) ?>/view.php?token=<?= h($created_token) ?></code>
+        Share link ready:<br>
+        <code>http://<?= h($_SERVER['HTTP_HOST']) ?>/view.php?token=<?= h($created_token) ?></code><br>
+        or<br>
+        <code>http://<?= h($_SERVER['HTTP_HOST']) ?>/view.php?rid=<?= h($created_rid) ?></code>
     </div>
 <?php endif ?>
 
