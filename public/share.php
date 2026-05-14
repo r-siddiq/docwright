@@ -3,6 +3,7 @@
 require __DIR__ . '/../lib/bootstrap.php';
 require __DIR__ . '/../lib/layout.php';
 
+require_auth();
 $staff = current_staff();
 $docId = (int) ($_GET['doc'] ?? 0);
 $stmt = db()->prepare('SELECT * FROM documents WHERE id = ?');
@@ -23,8 +24,16 @@ if (!$doc) {
 $error = null;
 $created_token = null;
 $created_rid = null;
+$csrf_error = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!validate_csrf($_POST['csrf_token'] ?? '')) {
+        http_response_code(419);
+        $csrf_error = 'Session expired, please try again.';
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$csrf_error) {
     $email = trim($_POST['email'] ?? '');
     if ($email === '') {
         $error = 'Recipient email is required.';
@@ -57,6 +66,9 @@ render_header('Share · ' . $doc['title'], $staff);
 <?php if ($error): ?>
     <div class="banner banner-error"><?= h($error) ?></div>
 <?php endif ?>
+<?php if ($csrf_error): ?>
+    <div class="banner banner-error"><?= h($csrf_error) ?></div>
+<?php endif ?>
 
 <?php if ($created_token): ?>
     <div class="banner banner-success">
@@ -70,6 +82,7 @@ render_header('Share · ' . $doc['title'], $staff);
 <section class="card">
     <h2 class="card-title">Create share link</h2>
     <form method="post">
+        <input type="hidden" name="csrf_token" value="<?= csrf_token() ?>">
         <div class="form-field">
             <label for="email">Recipient email</label>
             <input type="email" id="email" name="email" required>

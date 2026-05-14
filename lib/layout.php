@@ -1,6 +1,8 @@
 <?php
 
 function render_header(string $title, ?array $staff = null): void {
+    header('X-Content-Type-Options: nosniff');
+    header('X-Frame-Options: DENY');
     ?>
 <!doctype html>
 <html lang="en">

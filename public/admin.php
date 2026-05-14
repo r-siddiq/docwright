@@ -3,10 +3,20 @@
 require __DIR__ . '/../lib/bootstrap.php';
 require __DIR__ . '/../lib/layout.php';
 
+require_auth();
 $staff = current_staff();
+
 $error = null;
+$csrf_error = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!validate_csrf($_POST['csrf_token'] ?? '')) {
+        http_response_code(419);
+        $csrf_error = 'Session expired, please try again.';
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$csrf_error) {
     $title = trim($_POST['title'] ?? '');
     $body = trim($_POST['body'] ?? '');
 
@@ -57,6 +67,7 @@ render_header('Admin', $staff);
 
 <h1 class="page-title">Admin</h1>
 <p class="page-subtitle">Create documents and generate share links for recipients.</p>
+<p class="page-subtitle"><a href="/logout.php">Log out</a></p>
 
 <?php if (!empty($_GET['created'])): ?>
     <div class="banner banner-success">Document #<?= (int) $_GET['created'] ?> created.</div>
@@ -65,10 +76,14 @@ render_header('Admin', $staff);
 <?php if ($error): ?>
     <div class="banner banner-error"><?= h($error) ?></div>
 <?php endif ?>
+<?php if ($csrf_error): ?>
+    <div class="banner banner-error"><?= h($csrf_error) ?></div>
+<?php endif ?>
 
 <section class="card">
     <h2 class="card-title">New document</h2>
     <form method="post">
+        <input type="hidden" name="csrf_token" value="<?= csrf_token() ?>">
         <div class="form-field">
             <label for="title">Title</label>
             <input type="text" id="title" name="title" required>

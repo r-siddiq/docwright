@@ -16,18 +16,6 @@ if (!function_exists('db')) {
     }
 }
 
-if (!function_exists('current_staff')) {
-    function current_staff(): array {
-        $stmt = db()->prepare('SELECT * FROM staff WHERE id = 1');
-        $stmt->execute();
-        $row = $stmt->fetch();
-        if (!$row) {
-            throw new RuntimeException('No staff row #1 found. Did you run `php seed.php`?');
-        }
-        return $row;
-    }
-}
-
 if (!function_exists('audit_log')) {
     function audit_log(string $action, string $entity_type, int $entity_id, array $details = []): void {
         $staff = current_staff();
@@ -95,3 +83,54 @@ if (!function_exists('generate_readable_id')) {
 }
 
 !defined('AUDIT_ACTION_SCHEDULE') && define('AUDIT_ACTION_SCHEDULE', 'schedule');
+
+if (!function_exists('require_auth')) {
+    function require_auth(): void {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+        if (empty($_SESSION['staff_id'])) {
+            header('Location: /login.php');
+            exit;
+        }
+    }
+}
+
+if (!function_exists('csrf_token')) {
+    function csrf_token(): string {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+        if (empty($_SESSION['csrf_token'])) {
+            $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+        }
+        return $_SESSION['csrf_token'];
+    }
+}
+
+if (!function_exists('validate_csrf')) {
+    function validate_csrf(string $token): bool {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+        return isset($_SESSION['csrf_token']) && hash_equals($_SESSION['csrf_token'], $token);
+    }
+}
+
+if (!function_exists('current_staff')) {
+    function current_staff(): array {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+        if (empty($_SESSION['staff_id'])) {
+            throw new RuntimeException('Not authenticated. Did you mean to call require_auth() first?');
+        }
+        $stmt = db()->prepare('SELECT * FROM staff WHERE id = ?');
+        $stmt->execute([$_SESSION['staff_id']]);
+        $row = $stmt->fetch();
+        if (!$row) {
+            throw new RuntimeException('Staff not found for session staff_id.');
+        }
+        return $row;
+    }
+}
