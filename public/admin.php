@@ -13,14 +13,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($title === '' || $body === '') {
         $error = 'Title and body are required.';
     } else {
+        $scheduledAt = !empty($_POST['scheduled_at']) ? $_POST['scheduled_at'] : null;
         $stmt = db()->prepare('
-            INSERT INTO documents (title, body, created_by)
-            VALUES (?, ?, ?)
+            INSERT INTO documents (title, body, created_by, scheduled_at)
+            VALUES (?, ?, ?, ?)
         ');
-        $stmt->execute([$title, $body, $staff['id']]);
+        $stmt->execute([$title, $body, $staff['id'], $scheduledAt]);
         $docId = (int) db()->lastInsertId();
 
-        audit_log('create', 'document', $docId, ['title' => $title]);
+        if ($scheduledAt) {
+            audit_log(AUDIT_ACTION_SCHEDULE, 'document', $docId, ['scheduled_at' => $scheduledAt]);
+        } else {
+            audit_log('create', 'document', $docId, ['title' => $title]);
+        }
 
         header('Location: /admin.php?created=' . $docId);
         exit;
@@ -58,6 +63,11 @@ render_header('Admin', $staff);
         <div class="form-field">
             <label for="body">Body</label>
             <textarea id="body" name="body" required></textarea>
+        </div>
+        <div class="form-field">
+            <label for="scheduled_at">Schedule for (optional)</label>
+            <input type="datetime-local" id="scheduled_at" name="scheduled_at">
+            <span class="hint">Leave empty to publish immediately</span>
         </div>
         <button type="submit" class="btn">Create document</button>
     </form>
