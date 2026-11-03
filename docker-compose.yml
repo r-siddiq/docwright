@@ -2,8 +2,11 @@ services:
   app:
     build: .
     working_dir: /app
-    volumes:
-      - .:/app
     ports:
-      - "8000:8000"
-    command: sh -c "php seed.php && php -S 0.0.0.0:8000 -t public/"
+      - "127.0.0.1:8000:8000"
+    environment:
+      DOCWRIGHT_DB_PATH: /app/data/docwright.sqlite
+      DOCWRIGHT_DEMO_PASSWORD: ${DOCWRIGHT_DEMO_PASSWORD:?Set a local demo password before starting}
+    volumes:
+      - ./data:/app/data
+    command: sh -c 'if [ ! -f "$$DOCWRIGHT_DB_PATH" ]; then php seed.php; fi && exec php -S 0.0.0.0:8000 -t public/'

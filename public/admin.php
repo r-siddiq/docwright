@@ -44,14 +44,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$csrf_error) {
 
 $search = trim($_GET['search'] ?? '');
 if ($search !== '') {
-    $stmt = db()->prepare('
+    $stmt = db()->prepare("
         SELECT d.*, s.name AS creator_name
         FROM documents d
         JOIN staff s ON s.id = d.created_by
-        WHERE d.title LIKE ?
+        WHERE d.title LIKE ? ESCAPE '!'
         ORDER BY d.created_at DESC
-    ');
-    $stmt->execute([$search . '%']);
+    " );
+    $literalPrefix = strtr($search, ['!' => '!!', '%' => '!%', '_' => '!_']);
+    $stmt->execute([$literalPrefix . '%']);
     $docs = $stmt->fetchAll();
 } else {
     $docs = db()->query('
@@ -118,7 +119,7 @@ render_header('Admin', $staff);
     <?php elseif (empty($docs)): ?>
         <p class="empty">No documents yet.</p>
     <?php else: ?>
-        <p class="results-count"><?= count($docs) ?> document(s)<?= $search !== '' ? ' matching "'.$search.'"' : '' ?></p>
+        <p class="results-count"><?= count($docs) ?> document(s)<?= $search !== '' ? ' matching "'.h($search).'"' : '' ?></p>
         <table class="data">
             <thead>
                 <tr>

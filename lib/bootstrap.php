@@ -6,7 +6,7 @@ if (!function_exists('db')) {
     function db(): PDO {
         static $pdo = null;
         if ($pdo === null) {
-            $path = __DIR__ . '/../db.sqlite';
+            $path = getenv('DOCWRIGHT_DB_PATH') ?: __DIR__ . '/../db.sqlite';
             $pdo = new PDO('sqlite:' . $path);
             $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
             $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
@@ -61,14 +61,10 @@ if (!function_exists('slugify')) {
 if (!function_exists('generate_readable_id')) {
     function generate_readable_id(string $title): string {
         $slug = slugify($title);
-        $chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
         $maxAttempts = 3;
 
         for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
-            $random = '';
-            for ($i = 0; $i < 6; $i++) {
-                $random .= $chars[random_int(0, strlen($chars) - 1)];
-            }
+            $random = rtrim(strtr(base64_encode(random_bytes(16)), '+/', '-_'), '=');
             $id = $slug . '-' . $random;
 
             $stmt = db()->prepare("SELECT 1 FROM shares WHERE readable_id = ?");

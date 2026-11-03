@@ -1,4 +1,12 @@
-db.sqlite
+# Local runtime state and secrets
+.env
+.env.*
+!.env.example
+/data/
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
 *.log
 .DS_Store
 .idea/

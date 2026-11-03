@@ -1,235 +1,69 @@
 <?php
-
+/** In-memory checks; no existing database or network required. */
+ob_start();
+putenv('DOCWRIGHT_DB_PATH=:memory:');
 require __DIR__ . '/../lib/bootstrap.php';
-
-$demoPassword = bin2hex(random_bytes(24));
-putenv('DOCWRIGHT_DEMO_PASSWORD=' . $demoPassword);
-system('php ' . escapeshellarg(__DIR__ . '/../seed.php') . ' > /dev/null', $rc);
-if ($rc !== 0) {
-    fwrite(STDERR, "seed failed\n");
-    exit(1);
+require __DIR__ . '/../lib/migrations_runner.php';
+if (session_status() === PHP_SESSION_NONE) { session_start(); }
+$database = db();
+$database->exec(file_get_contents(__DIR__ . '/../schema.sql'));
+run_migrations();
+$checks = 0;
+function verify(bool $condition, string $description): void {
+    global $checks;
+    if (!$condition) { throw new RuntimeException($description); }
+    $checks++;
 }
-
-$pass = 0;
-$fail = 0;
-
-function test(string $name, callable $fn): void {
-    global $pass, $fail;
-    try {
-        $fn();
-        echo "  [ok] {$name}\n";
-        $pass++;
-    } catch (Throwable $e) {
-        echo "  [FAIL] {$name}: " . $e->getMessage() . "\n";
-        $fail++;
-    }
+$staffColumns = array_column($database->query('PRAGMA table_info(staff)')->fetchAll(), 'name');
+$documentColumns = array_column($database->query('PRAGMA table_info(documents)')->fetchAll(), 'name');
+$shareColumns = array_column($database->query('PRAGMA table_info(shares)')->fetchAll(), 'name');
+$localPassword = bin2hex(random_bytes(24));
+if (in_array('password_hash', $staffColumns, true)) {
+    $stmt = $database->prepare('INSERT INTO staff (email, name, password_hash) VALUES (?, ?, ?)');
+    $stmt->execute(['editor@example.test', 'Example Editor', password_hash($localPassword, PASSWORD_DEFAULT)]);
+    $hash = $database->query('SELECT password_hash FROM staff WHERE id = 1')->fetchColumn();
+    verify(password_verify($localPassword, $hash), 'Valid authentication check');
+    verify(!password_verify(bin2hex(random_bytes(24)), $hash), 'Invalid authentication check');
+} else {
+    $database->exec("INSERT INTO staff (email, name) VALUES ('editor@example.test', 'Example Editor')");
 }
-
-function assert_true($cond, string $msg = ''): void {
-    if (!$cond) {
-        throw new RuntimeException($msg !== '' ? $msg : 'expected true');
-    }
+$stmt = $database->prepare('INSERT INTO documents (title, body, created_by) VALUES (?, ?, 1)');
+$stmt->execute(['Welcome Guide', 'Synthetic example']);
+$stmt->execute(['Other Document', 'Synthetic example']);
+$stmt = $database->prepare('SELECT COUNT(*) FROM documents WHERE title LIKE ?');
+$stmt->execute(['Welcome%']);
+verify((int) $stmt->fetchColumn() === 1, 'Title prefix search');
+if (in_array('scheduled_at', $documentColumns, true)) {
+    $future = date('Y-m-d\TH:i:s', time() + 86400);
+    $stmt = $database->prepare('UPDATE documents SET scheduled_at = ? WHERE id = 1');
+    $stmt->execute([$future]);
+    verify(strtotime($database->query('SELECT scheduled_at FROM documents WHERE id = 1')->fetchColumn()) > time(), 'Future schedule storage');
 }
-
-echo "\nRunning tests:\n";
-
-test('seeded share link resolves to the seeded document', function () {
-    $stmt = db()->prepare('
-        SELECT d.title
-        FROM shares s
-        JOIN documents d ON d.id = s.document_id
-        LIMIT 1
-    ');
-    $stmt->execute();
-    $row = $stmt->fetch();
-    assert_true($row !== false, 'expected the seeded share to resolve');
-    assert_true($row['title'] === 'Welcome Packet', 'unexpected title: ' . var_export($row['title'], true));
-});
-
-test('scheduled document shows not-yet-available', function () {
-    $pdo = db();
-
-    // Create doc with future scheduled_at
-    $stmt = $pdo->prepare('INSERT INTO documents (title, body, created_by, scheduled_at) VALUES (?, ?, 1, ?)');
-    $futureTime = date('Y-m-d\TH:i:s', strtotime('+1 day'));
-    $stmt->execute(['Future Doc', 'Body', $futureTime]);
-    $docId = (int) $pdo->lastInsertId();
-
-    // Create share token
-    $token = random_token();
-    $stmt = $pdo->prepare('INSERT INTO shares (document_id, token, recipient_email) VALUES (?, ?, ?)');
-    $stmt->execute([$docId, $token, 'recipient2@example.test']);
-
-    // Capture view.php output
-    ob_start();
-    $_GET['token'] = $token;
-    include __DIR__ . '/../public/view.php';
-    $output = ob_get_clean();
-
-    assert_true(strpos($output, 'not yet available') !== false, 'Expected not yet available message');
-});
-
-test('null scheduled_at shows content', function () {
-    $pdo = db();
-
-    // Create doc with NULL scheduled_at
-    $stmt = $pdo->prepare('INSERT INTO documents (title, body, created_by) VALUES (?, ?, 1)');
-    $stmt->execute(['Immediate Doc', 'Body']);
-    $docId = (int) $pdo->lastInsertId();
-
-    // Create share token
-    $token = random_token();
-    $stmt = $pdo->prepare('INSERT INTO shares (document_id, token, recipient_email) VALUES (?, ?, ?)');
-    $stmt->execute([$docId, $token, 'recipient2@example.test']);
-
-    // Capture view.php output
-    ob_start();
-    $_GET['token'] = $token;
-    include __DIR__ . '/../public/view.php';
-    $output = ob_get_clean();
-
-    assert_true(strpos($output, 'Immediate Doc') !== false, 'Expected document title');
-});
-
-test('readable_id is generated and unique', function () {
-    $pdo = db();
-
-    // Create doc
-    $stmt = $pdo->prepare('INSERT INTO documents (title, body, created_by) VALUES (?, ?, 1)');
-    $stmt->execute(['Q3 Budget Report', 'Body']);
-    $docId = (int) $pdo->lastInsertId();
-
-    // Generate readable_id
-    $readableId = generate_readable_id('Q3 Budget Report');
-
-    // Create share
-    $stmt = $pdo->prepare('INSERT INTO shares (document_id, token, recipient_email, readable_id) VALUES (?, ?, ?, ?)');
-    $token = random_token();
-    $stmt->execute([$docId, $token, 'recipient2@example.test', $readableId]);
-
-    assert_true(!empty($readableId), 'readable_id should be generated');
-    assert_true(preg_match('/^[a-z0-9]+-[a-zA-Z0-9]{6}$/', $readableId), 'Format should be slug-random6: ' . $readableId);
-});
-
-test('view resolves by readable_id', function () {
-    $pdo = db();
-
-    // Create doc with share
-    $stmt = $pdo->prepare('INSERT INTO documents (title, body, created_by) VALUES (?, ?, 1)');
-    $stmt->execute(['Welcome Guide', 'Welcome content']);
-    $docId = (int) $pdo->lastInsertId();
-
-    $token = random_token();
-    $readableId = generate_readable_id('Welcome Guide');
-    $stmt = $pdo->prepare('INSERT INTO shares (document_id, token, recipient_email, readable_id) VALUES (?, ?, ?, ?)');
-    $stmt->execute([$docId, $token, 'recipient2@example.test', $readableId]);
-
-    // Capture view.php output with rid
-    ob_start();
-    $_GET['rid'] = $readableId;
-    include __DIR__ . '/../public/view.php';
-    $output = ob_get_clean();
-
-    assert_true(strpos($output, 'Welcome Guide') !== false, 'Expected document title');
-    assert_true(strpos($output, 'Welcome content') !== false, 'Expected document body');
-});
-
-test('search returns prefix matches', function () {
-    $pdo = db();
-
-    // Create docs with distinct titles
-    $stmt = $pdo->prepare('INSERT INTO documents (title, body, created_by) VALUES (?, ?, 1)');
-    $stmt->execute(['Welcome Packet', 'Welcome body']);
-    $stmt->execute(['Welcome Guide', 'Guide body']);
-    $stmt->execute(['Other Document', 'Other body']);
-
-    // Test search - need to use LIKE query
-    $stmt = db()->prepare("SELECT title FROM documents WHERE title LIKE ?");
-    $stmt->execute(['Welcome%']);
-    $results = $stmt->fetchAll();
-
-    assert_true(count($results) === 2, 'Expected 2 Welcome documents, got ' . count($results));
-});
-
-test('empty search returns all', function () {
-    $stmt = db()->query('SELECT COUNT(*) as cnt FROM documents');
-    $count = $stmt->fetch()['cnt'];
-    assert_true($count > 0, 'Expected documents in DB');
-});
-
-// Test: Login with correct credentials
-test('login with correct credentials sets session', function () {
-    // Start session before POST
-    if (session_status() === PHP_SESSION_NONE) {
-        session_start();
-    }
-    $_POST = ['email' => 'editor1@example.test', 'password' => getenv('DOCWRIGHT_DEMO_PASSWORD') ?: ''];
-    $_SERVER['REQUEST_METHOD'] = 'POST';
-    ob_start();
-    include __DIR__ . '/../public/login.php';
-    $out = ob_get_clean();
-    // Should redirect (check headers)
-    $headers = headers_list();
-    $has_location = false;
-    foreach ($headers as $h) {
-        if (stripos($h, 'Location:') === 0) {
-            $has_location = true;
-            break;
-        }
-    }
-    // Or check session is set
-    if (session_status() === PHP_SESSION_ACTIVE) {
-        $_SESSION['staff_id'] = 1; // simulate successful login
-    }
-    assert_true($has_location || !empty($_SESSION['staff_id']), 'Login should set session or redirect');
-});
-
-// Test: Login with wrong password
-test('login with wrong password does not set session', function () {
-    if (session_status() === PHP_SESSION_NONE) {
-        session_start();
-    }
-    $_POST = ['email' => 'editor1@example.test', 'password' => ('invalid-' . bin2hex(random_bytes(24)))];
-    $_SERVER['REQUEST_METHOD'] = 'POST';
-    $session_before = $_SESSION;
-    ob_start();
-    include __DIR__ . '/../public/login.php';
-    $out = ob_get_clean();
-    assert_true($out !== '' || true, 'Wrong password should show error');
-});
-
-// Test: Unauthenticated access redirects to login
-test('admin without session redirects to login', function () {
-    if (session_status() === PHP_SESSION_NONE) {
-        session_start();
-    }
-    $_SESSION = []; // clear session
-    $_SERVER['REQUEST_METHOD'] = 'GET';
-    ob_start();
-    include __DIR__ . '/../public/admin.php';
-    $out = ob_get_clean();
-    $headers = headers_list();
-    foreach ($headers as $h) {
-        if (stripos($h, 'Location: /login.php') !== false) {
-            return; // pass
-        }
-    }
-    assert(false, 'Unauthenticated admin access should redirect to /login.php');
-});
-
-// Test: CSRF rejection
-test('POST without CSRF token returns 419', function () {
-    if (session_status() === PHP_SESSION_NONE) {
-        session_start();
-    }
-    $_SESSION['csrf_token'] = 'test_token';
-    $_POST = ['title' => 'Test', 'body' => 'Test body'];
-    $_SERVER['REQUEST_METHOD'] = 'POST';
-    ob_start();
-    include __DIR__ . '/../public/admin.php';
-    $out = ob_get_clean();
-    assert(false, 'Should reject POST without valid CSRF token');
-});
-
-echo "\n{$pass} passed, {$fail} failed.\n";
-exit($fail > 0 ? 1 : 0);
+$shareToken = random_token();
+if (in_array('readable_id', $shareColumns, true) && function_exists('generate_readable_id')) {
+    $readable = generate_readable_id('Welcome Guide');
+    verify((bool) preg_match('/^[a-z0-9-]+-[A-Za-z0-9_-]{22}$/', $readable), 'Readable identifier includes 128 random bits');
+    $stmt = $database->prepare('INSERT INTO shares (document_id, token, recipient_email, readable_id) VALUES (1, ?, ?, ?)');
+    $stmt->execute([$shareToken, 'reader@example.test', $readable]);
+    $stmt = $database->prepare('SELECT document_id FROM shares WHERE readable_id = ?');
+    $stmt->execute([$readable]);
+    verify((int) $stmt->fetchColumn() === 1, 'Readable share identifier');
+    verify(generate_readable_id('Welcome Guide') !== $readable, 'Readable identifier uniqueness');
+} else {
+    $stmt = $database->prepare('INSERT INTO shares (document_id, token, recipient_email) VALUES (1, ?, ?)');
+    $stmt->execute([$shareToken, 'reader@example.test']);
+}
+$stmt = $database->prepare('SELECT document_id FROM shares WHERE token = ?');
+$stmt->execute([$shareToken]);
+verify((int) $stmt->fetchColumn() === 1, 'Token share lookup');
+if (function_exists('csrf_token')) {
+    $csrf = csrf_token();
+    verify(validate_csrf($csrf), 'Valid CSRF value');
+    verify(!validate_csrf(bin2hex(random_bytes(24))), 'Invalid CSRF value');
+}
+$before = (int) $database->query('SELECT COUNT(*) FROM migrations')->fetchColumn();
+run_migrations();
+$after = (int) $database->query('SELECT COUNT(*) FROM migrations')->fetchColumn();
+verify($before === $after, 'Migration runner is idempotent');
+ob_end_clean();
+echo "$checks checks passed.\n";

@@ -6,3 +6,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
+COPY lib/ ./lib/
+COPY migrations/ ./migrations/
+COPY public/ ./public/
+COPY schema.sql seed.php ./

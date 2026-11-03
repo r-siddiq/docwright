@@ -1,5 +1,8 @@
 <?php
 require __DIR__ . '/../lib/bootstrap.php';
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 $_SESSION = array();
 if (ini_get('session.use_cookies')) {
     $params = session_get_cookie_params();
